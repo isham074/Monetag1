@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin Panel - Monetag Mini App</title>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      back;ground: #10151c;
+      color: white;
+      padding: 20px;
+    }
+    h1, h2 {
+      text-align: center;
+    }
+    .card, .user-card, .withdraw-card, .zone-card {
+      background: #1c2331;
+      border-radius: 8px;
+      padding: 15px;
+      margin: 10px 0;
+    }
+    .btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      background: #007BFF;
+      color: white;
+      cursor: pointer;
+      margin: 2px;
+    }
+    .popup {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .popup-content {
+      background: #222d52;
+      padding: 20px;
+      border-radius: 10px;
+      width: 90%;
+      max-width: 400px;
+    }
+    .popup-content input {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 15px;
+      border-radius: 6px;
+      border: none;
+    }
+    .dashboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    .dashboard .card {
+      text-align: center;
+      font-size: 18px;
+    }
+    input[type="text"], input[type="number"] {
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      margin: 10px auto;
+      display: block;
+      width: 90%;
+      max-width: 400px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Admin Panel</h1>
+
+  <div class="dashboard">
+    <div class="card">👥 Users: <b id="totalUsers">0</b></div>
+    <div class="card">💰 Total Balance: <b id="totalBalance">0</b> BDT</div>
+    <div class="card">📤 Withdraw Requests: <b id="totalWithdraws">0</b></div>
+    <div class="card">✅ Approved Withdraws: <b id="approvedWithdraws">0</b></div>
+  </div>
+
+  <div class="zone-card">
+    <h2>🧩 Monetag Zone ID</h2>
+    <input type="text" id="monetagZoneIdInput" placeholder="Loading..." />
+    <button class="btn" onclick="updateZoneId()">Update Zone ID</button>
+    <p style="text-align:center; color: #ccc;" id="zoneIdStatus"></p>
+  </div>
+
+  <h2>Users</h2>
+  <div id="userList"></div>
+
+  <h2>Withdraw Requests</h2>
+  <input type="text" id="searchWithdraw" oninput="filterWithdraws()" placeholder="Search by username or status" />
+  <div id="withdrawList"></div>
+
+  <div class="popup" id="editPopup">
+    <div class="popup-content">
+      <h3>Edit Balance</h3>
+      <input type="number" id="newBalance" placeholder="Enter new balance" />
+      <button class="btn" onclick="confirmEdit()">Confirm</button>
+      <button class="btn" onclick="closeEditPopup()">Cancel</button>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      databaseURL: "https://monetagearn-f9da0-default-rtdb.firebaseio.com/",
+      appId: "1:264763497338:android:fd492055a6e2a68fc794c3",
+    }
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let currentEditUserId = null;
+    let withdrawData = {};
+
+    function loadUsers() {
+      db.ref("users").on("value", (snapshot) => {
+        const data = snapshot.val();
+        const list = document.getElementById("userList");
+        list.innerHTML = '';
+        let total = 0;
+        let count = 0;
+
+        for (const id in data) {
+          const user = data[id];
+          const balance = parseFloat(user.points || 0);
+          total += balance;
+          count++;
+
+          const div = document.createElement("div");
+          div.className = "user-card";
+          div.innerHTML = `
+            <strong>${user.name || 'Unnamed'}</strong> (@${user.username || 'N/A'})<br>
+            Balance: ${balance.toFixed(2)} BDT<br>
+            Ads Watched: ${user.adsWatched || 0}<br>
+            <button class="btn" onclick="openEditPopup('${id}', ${balance})">Edit Balance</button>
+          `;
+          list.appendChild(div);
+        }
+
+        document.getElementById("totalUsers").innerText = count;
+        document.getElementById("totalBalance").innerText = total.toFixed(2);
+      });
+    }
+
+    function openEditPopup(userId, currentPoints) {
+      currentEditUserId = userId;
+      document.getElementById("newBalance").value = currentPoints;
+      document.getElementById("editPopup").style.display = "flex";
+    }
+
+    function closeEditPopup() {
+      document.getElementById("editPopup").style.display = "none";
+    }
+
+    function confirmEdit() {
+      const newPoints = parseFloat(document.getElementById("newBalance").value);
+      if (isNaN(newPoints)) return alert("Invalid number");
+      db.ref(`users/${currentEditUserId}`).update({ points: newPoints })
+        .then(() => {
+          alert("Balance updated.");
+          closeEditPopup();
+        });
+    }
+
+    function loadWithdrawRequests() {
+      db.ref("withdrawRequests").on("value", (snapshot) => {
+        withdrawData = snapshot.val() || {};
+        renderWithdraws(withdrawData);
+
+        let total = 0;
+        let approved = 0;
+        for (const id in withdrawData) {
+          total++;
+          if (withdrawData[id].status === "approved") approved++;
+        }
+        document.getElementById("totalWithdraws").innerText = total;
+        document.getElementById("approvedWithdraws").innerText = approved;
+      });
+    }
+
+    function renderWithdraws(data) {
+      const list = document.getElementById("withdrawList");
+      list.innerHTML = '';
+      for (const id in data) {
+        const req = data[id];
+        const date = req.timestamp ? new Date(req.timestamp).toLocaleString() : 'N/A';
+        const isPending = req.status === 'pending';
+
+        const div = document.createElement("div");
+        div.className = "withdraw-card";
+        div.innerHTML = `
+          <strong>${req.name || 'N/A'} (@${req.username || 'N/A'})</strong><br>
+          📱 Bkash: <b>${req.bkashNumber || 'N/A'}</b><br>
+          💰 Amount: <b>${req.amount} BDT</b><br>
+          🕒 Time: ${date}<br>
+          🏷️ Status: <b style="color:${req.status === 'approved' ? 'lightgreen' : req.status === 'rejected' ? 'red' : 'orange'}">${req.status}</b><br>
+          ${isPending ? `
+            <button class="btn" onclick="updateWithdrawStatus('${id}', 'approved')">✅ Approve</button>
+            <button class="btn" onclick="updateWithdrawStatus('${id}', 'rejected')">❌ Reject</button>
+          ` : `<i>No action needed</i>`}
+        `;
+        list.appendChild(div);
+      }
+    }
+
+    function updateWithdrawStatus(reqId, status) {
+      db.ref(`withdrawRequests/${reqId}`).update({ status })
+        .then(() => alert(`Withdraw ${status}`));
+    }
+
+    function filterWithdraws() {
+      const q = document.getElementById('searchWithdraw').value.toLowerCase();
+      const filtered = {};
+      for (const id in withdrawData) {
+        const req = withdrawData[id];
+        const match = (req.username || '').toLowerCase().includes(q) || (req.status || '').toLowerCase().includes(q);
+        if (match) filtered[id] = req;
+      }
+      renderWithdraws(filtered);
+    }
+
+    function loadMonetagZoneId() {
+      const input = document.getElementById("monetagZoneIdInput");
+      db.ref("config/monetagZoneId").once("value").then(snapshot => {
+        input.value = snapshot.val() || "";
+      });
+    }
+
+    function updateZoneId() {
+      const zoneId = document.getElementById("monetagZoneIdInput").value.trim();
+      const status = document.getElementById("zoneIdStatus");
+      if (!zoneId) return alert("Zone ID cannot be empty.");
+      db.ref("config").update({ monetagZoneId: zoneId })
+        .then(() => status.innerText = "✅ Zone ID updated successfully.")
+        .catch(() => status.innerText = "❌ Failed to update Zone ID.");
+    }
+
+    // Init
+    loadUsers();
+    loadWithdrawRequests();
+    loadMonetagZoneId();
+  </script>
+</body>
+</html>
